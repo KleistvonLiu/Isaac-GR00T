@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from pprint import pprint
 from typing import List, Literal
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import tyro
@@ -329,14 +331,15 @@ def load_dataset(
         plot_state_action_space(state_dict, action_dict)
         print("Plotted state and action space")
 
+    print("total_images =", total_images)  # 很可能打印出 0,1,2,3
     fig, axs = plt.subplots(4, total_images // 4, figsize=(20, 10))
     for i, ax in enumerate(axs.flat):
         ax.imshow(images_list[i])
         ax.axis("off")
         ax.set_title(f"Image {i*skip_frames}")
     plt.tight_layout()  # adjust the subplots to fit into the figure area.
-    plt.show()
-
+    # plt.show()
+    plt.savefig("grid.png")        # Head‑less 环境下保存文件
 
 if __name__ == "__main__":
     config = tyro.cli(ArgsConfig)

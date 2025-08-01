@@ -166,6 +166,9 @@ class Gr00tPolicy(BasePolicy):
             Dict[str, Any]: The predicted action.
         """
         # let the get_action handles both batch and single input
+        # for k,v in observations.items():
+        #     print(f"obs {k}")
+        #     # print(f"{v.shape}")
         is_batch = self._check_state_is_batched(observations)
         if not is_batch:
             observations = unsqueeze_dict_values(observations)
@@ -183,6 +186,8 @@ class Gr00tPolicy(BasePolicy):
 
         if not is_batch:
             unnormalized_action = squeeze_dict_values(unnormalized_action)
+        # for k,v in unnormalized_action.items():
+        #     print(f"pred {k}: {v.shape}")
         return unnormalized_action
 
     def _get_action_from_normalized_input(self, normalized_input: Dict[str, Any]) -> torch.Tensor:
