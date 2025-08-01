@@ -63,13 +63,13 @@ class Gr00tPolicy(BasePolicy):
     """
 
     def __init__(
-        self,
-        model_path: str,
-        embodiment_tag: Union[str, EmbodimentTag],
-        modality_config: Dict[str, ModalityConfig],
-        modality_transform: ComposedModalityTransform,
-        denoising_steps: Optional[int] = None,
-        device: Union[int, str] = "cuda" if torch.cuda.is_available() else "cpu",
+            self,
+            model_path: str,
+            embodiment_tag: Union[str, EmbodimentTag],
+            modality_config: Dict[str, ModalityConfig],
+            modality_transform: ComposedModalityTransform,
+            denoising_steps: Optional[int] = None,
+            device: Union[int, str] = "cuda" if torch.cuda.is_available() else "cpu",
     ):
         """
         Initialize the Gr00tPolicy.
@@ -113,7 +113,7 @@ class Gr00tPolicy(BasePolicy):
 
         if denoising_steps is not None:
             if hasattr(self.model, "action_head") and hasattr(
-                self.model.action_head, "num_inference_timesteps"
+                    self.model.action_head, "num_inference_timesteps"
             ):
                 self.model.action_head.num_inference_timesteps = denoising_steps
                 print(f"Set action denoising steps to {denoising_steps}")
@@ -166,9 +166,12 @@ class Gr00tPolicy(BasePolicy):
             Dict[str, Any]: The predicted action.
         """
         # let the get_action handles both batch and single input
-        # for k,v in observations.items():
-        #     print(f"obs {k}")
-        #     # print(f"{v.shape}")
+        # video.middle_view        (1, 480, 640, 3)
+        # video.right_view        (1, 480, 640, 3)
+        # video.left_view        (1, 480, 640, 3)
+        # state.arm_joints       (1, 6)
+        # state.gripper       (1, 1)
+        # annotation.human.task_description
         is_batch = self._check_state_is_batched(observations)
         if not is_batch:
             observations = unsqueeze_dict_values(observations)
@@ -180,21 +183,26 @@ class Gr00tPolicy(BasePolicy):
 
         # Apply transforms
         normalized_input = self.apply_transforms(observations)
-
+        # state: torch.Size([1, 1, 64])
+        # state_mask: torch.Size([1, 1, 64])
+        # eagle_input_ids: torch.Size([1, 820])
+        # eagle_attention_mask: torch.Size([1, 820])
+        # eagle_pixel_values: torch.Size([3, 3, 224, 224])
+        # eagle_image_sizes: torch.Size([3, 2])
+        # embodiment_id: torch.Size([1])
         normalized_action = self._get_action_from_normalized_input(normalized_input)
         unnormalized_action = self._get_unnormalized_action(normalized_action)
 
         if not is_batch:
             unnormalized_action = squeeze_dict_values(unnormalized_action)
-        # for k,v in unnormalized_action.items():
-        #     print(f"pred {k}: {v.shape}")
+        # action.arm_joints: (16, 6)
+        # action.gripper: (16,)
         return unnormalized_action
 
     def _get_action_from_normalized_input(self, normalized_input: Dict[str, Any]) -> torch.Tensor:
         # Set up autocast context if needed
         with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=COMPUTE_DTYPE):
-            model_pred = self.model.get_action(normalized_input)
-
+            model_pred = self.model.get_action(normalized_input) ## action_pred: torch.Size([1, 16, 32])
         normalized_action = model_pred["action_pred"].float()
         return normalized_action
 

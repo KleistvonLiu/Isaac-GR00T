@@ -20,6 +20,7 @@ from transformers import AutoConfig, AutoModel
 from transformers.feature_extraction_utils import BatchFeature
 
 import gr00t
+from gr00t.utils.logging import print_dict_shapes
 
 DEFAULT_EAGLE_PATH = os.path.join(
     os.path.dirname(gr00t.__file__), "model", "backbone", "eagle2_hg_model"
@@ -47,7 +48,7 @@ class EagleBackbone(nn.Module):
         super().__init__()
         assert not reproject_vision, "Reproject vision is not implemented here, set to False"
 
-        config = AutoConfig.from_pretrained(DEFAULT_EAGLE_PATH, trust_remote_code=True)
+        config = AutoConfig.from_pretrained(DEFAULT_EAGLE_PATH, trust_remote_code=True) #实例化的竟然是自己定义的类，但是没有import？
         self.eagle_model = AutoModel.from_config(config, trust_remote_code=True)
 
         if project_to_dim is not None:
@@ -103,13 +104,18 @@ class EagleBackbone(nn.Module):
             k.removeprefix(eagle_prefix): v
             for k, v in vl_input.items()
             if k.startswith(eagle_prefix)
-        }
+        }         # input_ids: torch.Size([1, 820])# attention_mask: torch.Size([1, 820]) # pixel_values: torch.Size([3, 3, 224, 224])
         del eagle_input["image_sizes"]
 
         eagle_output = self.eagle_model(**eagle_input, output_hidden_states=True, return_dict=True)
-        eagle_features = eagle_output.hidden_states[self.select_layer]
-
-        eagle_features = self.eagle_linear(eagle_features)
+        # logits: Tensor(1, 820, 151680)
+        # hidden_states: tuple(Tensor(1, 820, 2048), Tensor(1, 820, 2048), Tensor(1, 820, 2048), Tensor(1, 820, 2048),
+        #                      Tensor(1, 820, 2048), Tensor(1, 820, 2048), Tensor(1, 820, 2048), Tensor(1, 820, 2048),
+        #                      Tensor(1, 820, 2048), Tensor(1, 820, 2048), Tensor(1, 820, 2048), Tensor(1, 820, 2048),
+        #                      Tensor(1, 820, 2048))
+        # <class 'transformers_modules.eagle2_hg_model.modeling_eagle2_5_vl.Eagle2_5_VLForConditionalGeneration'>
+        eagle_features = eagle_output.hidden_states[self.select_layer] # : Tensor(1, 820, 2048)
+        eagle_features = self.eagle_linear(eagle_features) # : Tensor(1, 820, 2048)
         return eagle_features, eagle_input["attention_mask"]
 
     def forward(self, vl_input: BatchFeature) -> BatchFeature:
@@ -119,6 +125,7 @@ class EagleBackbone(nn.Module):
 
         # YL (TODO HACK): to resolve DDP issue when tune_visual=True
         # Ensure all trainable parameters in vision_model are used in the forward pass for DDP compatibility
+        # 这种写法是一种 零成本（forward-/backward 数值都为 0）但能保持参数依赖 的小技巧，适用于多 GPU / 混合精度 / FSDP 等复杂训练管线。
         if self.training and self.tune_visual:
             dummy_term = torch.tensor(
                 0.0, device=eagle_embeds.device, dtype=eagle_embeds.dtype, requires_grad=True

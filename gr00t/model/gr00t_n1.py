@@ -68,9 +68,9 @@ class GR00T_N1_5(PreTrainedModel):
     """
 
     def __init__(
-        self,
-        config: GR00T_N1_5_Config,
-        local_model_path: str,
+            self,
+            config: GR00T_N1_5_Config,
+            local_model_path: str,
     ):
         assert isinstance(config.backbone_cfg, dict)
         assert isinstance(config.action_head_cfg, dict)
@@ -96,9 +96,9 @@ class GR00T_N1_5(PreTrainedModel):
             action = inputs["action"]
             type_ok = isinstance(action, torch.Tensor)
             shape_ok = (
-                len(action.shape) == 3
-                and action.shape[1] == self.action_horizon
-                and action.shape[2] == self.action_dim
+                    len(action.shape) == 3
+                    and action.shape[1] == self.action_horizon
+                    and action.shape[2] == self.action_dim
             )
             if not type_ok:
                 error_msg += f"\n{action.dtype=}"
@@ -127,8 +127,8 @@ class GR00T_N1_5(PreTrainedModel):
 
     def validate_data(self, action_head_outputs, backbone_outputs, is_training):
         fail_backbone = (
-            not isinstance(backbone_outputs, BatchFeature)
-            or BACKBONE_FEATURE_KEY not in backbone_outputs
+                not isinstance(backbone_outputs, BatchFeature)
+                or BACKBONE_FEATURE_KEY not in backbone_outputs
         )
 
         if fail_backbone:
@@ -139,14 +139,14 @@ class GR00T_N1_5(PreTrainedModel):
             raise ValueError(error_msg)
 
         fail_action_head = (not isinstance(action_head_outputs, BatchFeature)) or not (
-            (
-                LOSS_KEY in action_head_outputs and is_training
-            )  # there might not be an action prediction during training
-            or (
-                ACTION_KEY in action_head_outputs
-                and action_head_outputs[ACTION_KEY].shape[1] == self.action_horizon
-                and action_head_outputs[ACTION_KEY].shape[2] == self.action_dim
-            )
+                (
+                        LOSS_KEY in action_head_outputs and is_training
+                )  # there might not be an action prediction during training
+                or (
+                        ACTION_KEY in action_head_outputs
+                        and action_head_outputs[ACTION_KEY].shape[1] == self.action_horizon
+                        and action_head_outputs[ACTION_KEY].shape[2] == self.action_dim
+                )
         )
 
         if fail_action_head:
@@ -159,8 +159,8 @@ class GR00T_N1_5(PreTrainedModel):
             raise ValueError(error_msg)
 
     def forward(
-        self,
-        inputs: dict,
+            self,
+            inputs: dict,
     ) -> BatchFeature:
         backbone_inputs, action_inputs = self.prepare_input(inputs)
         backbone_outputs = self.backbone(backbone_inputs)
@@ -169,21 +169,42 @@ class GR00T_N1_5(PreTrainedModel):
         return action_head_outputs
 
     def get_action(
-        self,
-        inputs: dict,
+            self,
+            inputs: dict,
     ) -> BatchFeature:
+        # inputs:
+        # state: torch.Size([1, 1, 64])
+        # state_mask: torch.Size([1, 1, 64])
+        # eagle_input_ids: torch.Size([1, 820])
+        # eagle_attention_mask: torch.Size([1, 820])
+        # eagle_pixel_values: torch.Size([3, 3, 224, 224])
+        # eagle_image_sizes: torch.Size([3, 2])
+        # embodiment_id: torch.Size([1])
         backbone_inputs, action_inputs = self.prepare_input(inputs)
         # Because the behavior of backbones remains the same for training and inference, we can use `forward` for backbones.
-        backbone_outputs = self.backbone(backbone_inputs)
-        action_head_outputs = self.action_head.get_action(backbone_outputs, action_inputs)
+        backbone_outputs = self.backbone(backbone_inputs) #backbone_features:torch.Size([1, 820, 2048]) backbone_attention_mask:torch.Size([1, 820])
+        action_head_outputs = self.action_head.get_action(backbone_outputs, action_inputs) #action_pred:torch.Size([1, 16, 32])
         self.validate_data(action_head_outputs, backbone_outputs, is_training=False)
         return action_head_outputs
 
     def prepare_input(self, inputs) -> Tuple[BatchFeature, BatchFeature]:
         self.validate_inputs(inputs)
         backbone_inputs = self.backbone.prepare_input(inputs)
+        # state: torch.Size([1, 1, 64])
+        # state_mask: torch.Size([1, 1, 64])
+        # eagle_input_ids: torch.Size([1, 820])
+        # eagle_attention_mask: torch.Size([1, 820])
+        # eagle_pixel_values: torch.Size([3, 3, 224, 224])
+        # eagle_image_sizes: torch.Size([3, 2])
+        # embodiment_id: torch.Size([1])
         action_inputs = self.action_head.prepare_input(inputs)
-
+        # state: torch.Size([1, 1, 64])
+        # state_mask: torch.Size([1, 1, 64])
+        # eagle_input_ids: torch.Size([1, 820])
+        # eagle_attention_mask: torch.Size([1, 820])
+        # eagle_pixel_values: torch.Size([3, 3, 224, 224])
+        # eagle_image_sizes: torch.Size([3, 2])
+        # embodiment_id: torch.Size([1])
         def to_device_with_maybe_dtype(x):
             # Only cast to self.compute_dtype if the tensor is floating
             if torch.is_floating_point(x):

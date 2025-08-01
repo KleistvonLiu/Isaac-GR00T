@@ -79,13 +79,85 @@ class Eagle2_5_VLPreTrainedModel(PreTrainedModel):
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
 
-
+'''
+Eagle2_5_VLForConditionalGeneration(
+  (vision_model): SiglipVisionModel(
+    (vision_model): SiglipVisionTransformer(
+      (embeddings): SiglipVisionEmbeddings(
+        (patch_embedding): Conv2d(3, 1152, kernel_size=(14, 14), stride=(14, 14), padding=valid)
+        (position_embedding): Embedding(256, 1152)
+      )
+      (encoder): SiglipEncoder(
+        (layers): ModuleList(
+          (0-26): 27 x SiglipEncoderLayer(
+            (layer_norm1): LayerNorm((1152,), eps=1e-06, elementwise_affine=True)
+            (self_attn): SiglipAttention(
+              (k_proj): Linear(in_features=1152, out_features=1152, bias=True)
+              (v_proj): Linear(in_features=1152, out_features=1152, bias=True)
+              (q_proj): Linear(in_features=1152, out_features=1152, bias=True)
+              (out_proj): Linear(in_features=1152, out_features=1152, bias=True)
+            )
+            (layer_norm2): LayerNorm((1152,), eps=1e-06, elementwise_affine=True)
+            (mlp): SiglipMLP(
+              (activation_fn): PytorchGELUTanh()
+              (fc1): Linear(in_features=1152, out_features=4304, bias=True)
+              (fc2): Linear(in_features=4304, out_features=1152, bias=True)
+            )
+          )
+        )
+      )
+      (post_layernorm): LayerNorm((1152,), eps=1e-06, elementwise_affine=True)
+      (head): SiglipMultiheadAttentionPoolingHead(
+        (attention): MultiheadAttention(
+          (out_proj): NonDynamicallyQuantizableLinear(in_features=1152, out_features=1152, bias=True)
+        )
+        (layernorm): LayerNorm((1152,), eps=1e-06, elementwise_affine=True)
+        (mlp): SiglipMLP(
+          (activation_fn): PytorchGELUTanh()
+          (fc1): Linear(in_features=1152, out_features=4304, bias=True)
+          (fc2): Linear(in_features=4304, out_features=1152, bias=True)
+        )
+      )
+    )
+  )
+  (language_model): Qwen3ForCausalLM(
+    (model): Qwen3Model(
+      (embed_tokens): Embedding(151680, 2048)
+      (layers): ModuleList(
+        (0-11): 12 x Qwen3DecoderLayer(
+          (self_attn): Qwen3Attention(
+            (q_proj): Linear(in_features=2048, out_features=2048, bias=False)
+            (k_proj): Linear(in_features=2048, out_features=1024, bias=False)
+            (v_proj): Linear(in_features=2048, out_features=1024, bias=False)
+            (o_proj): Linear(in_features=2048, out_features=2048, bias=False)
+            (q_norm): Qwen3RMSNorm((128,), eps=1e-06)
+            (k_norm): Qwen3RMSNorm((128,), eps=1e-06)
+          )
+          (mlp): Qwen3MLP(
+            (gate_proj): Linear(in_features=2048, out_features=6144, bias=False)
+            (up_proj): Linear(in_features=2048, out_features=6144, bias=False)
+            (down_proj): Linear(in_features=6144, out_features=2048, bias=False)
+            (act_fn): SiLU()
+          )
+          (input_layernorm): Qwen3RMSNorm((2048,), eps=1e-06)
+          (post_attention_layernorm): Qwen3RMSNorm((2048,), eps=1e-06)
+        )
+      )
+      (norm): Qwen3RMSNorm((2048,), eps=1e-06)
+      (rotary_emb): Qwen3RotaryEmbedding()
+    )
+    (lm_head): Linear(in_features=2048, out_features=151680, bias=False)
+  )
+  (mlp1): Sequential(
+    (0): Linear(in_features=1152, out_features=2048, bias=True)
+  )
+)
+'''
 class Eagle2_5_VLForConditionalGeneration(Eagle2_5_VLPreTrainedModel, GenerationMixin):
     config_class = Eagle2_5_VLConfig
 
     def __init__(self, config: Eagle2_5_VLConfig, vision_model=None, language_model=None):
         super().__init__(config)
-
         image_size = config.force_image_size or config.vision_config.image_size
         patch_size = config.vision_config.patch_size
         self.patch_size = patch_size
@@ -159,7 +231,7 @@ class Eagle2_5_VLForConditionalGeneration(Eagle2_5_VLPreTrainedModel, Generation
         self.image_token_index = config.image_token_index
         self.neftune_alpha = None
 
-        if config.use_backbone_lora:
+        if config.use_backbone_lora: # for vision
             self.wrap_backbone_lora(
                 r=config.use_backbone_lora, lora_alpha=2 * config.use_backbone_lora
             )
