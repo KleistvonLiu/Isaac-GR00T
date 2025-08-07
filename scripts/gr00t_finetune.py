@@ -73,7 +73,7 @@ class ArgsConfig:
     tune_projector: bool = True
     """Whether to fine-tune the projector."""
 
-    tune_diffusion_model: bool = False
+    tune_diffusion_model: bool = True
     """Whether to fine-tune the diffusion model."""
 
     resume: bool = False
@@ -104,7 +104,7 @@ class ArgsConfig:
     dataloader_num_workers: int = 8
     """Number of workers for data loading."""
 
-    report_to: Literal["wandb", "tensorboard", "azure_ml"] = "wandb"
+    report_to: Literal["wandb", "tensorboard", "azure_ml"] = "tensorboard"
     """Where to report training metrics (e.g., 'wandb', 'tensorboard', 'azure_ml')."""
 
     # Data loading parameters

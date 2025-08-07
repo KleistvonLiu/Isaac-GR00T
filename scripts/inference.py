@@ -31,13 +31,12 @@ def inference_worker(
     config,
     checkpoint_dir,
 ):
-
     # 1. 只在该进程里加载一次模型 / CUDA
     data_config = DATA_CONFIG_MAP[config.data_config]
     modality_config = data_config.modality_config()
     modality_transform = data_config.transform()
     policy: BasePolicy = Gr00tPolicy(
-        model_path=config.checkpoint_dir,
+        model_path=checkpoint_dir,
         modality_config=modality_config,
         modality_transform=modality_transform,
         embodiment_tag=config.embodiment_tag,
@@ -45,22 +44,39 @@ def inference_worker(
         device="cuda" if torch.cuda.is_available() else "cpu",
     )
 
+    # 最多缓存 20 帧动作
+    action_queue: collections.deque[np.ndarray] = collections.deque(maxlen=20)
+
     while True:
         item = in_q.get()
-        if item is None:            # 收到结束标识
+        if item is None:        # 收到结束标识
             del policy
             break
-        idx, obs = item       # idx 用来对应主进程里的顺序
-        start_time = time.time()
-        result = policy.get_action(obs)
-        infer_time = time.time() - start_time
-        print(f"Step {idx}: infer time = {infer_time:.4f} seconds")
-        action = np.concatenate(
-            [result['action.arm_joints'],  # (16,6)
-             result['action.gripper'][:, None]],  # (16,) → (16,1)
-            axis=1  # 沿列方向拼
+
+        idx, obs = item
+        # --- ① 先看缓存里有没有动作 ---
+        if action_queue:
+            action = action_queue.popleft()
+            out_q.put((idx, action))
+            continue
+
+        # --- ② 缓存空 → 重新推理一串动作 ---
+        t0 = time.time()
+        result = policy.get_action(obs)          # dict: { 'action.arm_joints': (16,6), 'action.gripper': (16,) }
+        infer_time = time.time() - t0
+        print(f"Step {idx}: infer time = {infer_time:.4f}s")
+
+        # (16,6) + (16,) → (16,7)
+        actions = np.concatenate(
+            [result["action.arm_joints"],
+             result["action.gripper"][:, None]],
+            axis=1
         )
-        out_q.put((idx, action))
+
+        # 将第 0 帧立刻返回；其余帧入队
+        out_q.put((idx, actions[0]))
+        for a in actions[1:]:           # 最多 15 帧压入缓存
+            action_queue.append(a)
 
 def linear_transition(old_actions, new_actions):
     """
@@ -197,107 +213,50 @@ def main():
     # rows = []
     step = 1
     step_time = step/(args.fps)
-    # prompt = args.task
-    # tokenizer = PaligemmaTokenizer()
-    # tokenized, mask = tokenizer.tokenize(prompt)
-
-    action_queue = collections.deque()  # 存储当前动作序列
-    waiting_for_infer = False
-    action_step_counter = 0  # 记录已执行的动作步数
-    first = True
 
     while i < kMaxTimeStamps:
         t0 = time.perf_counter()
+        obs = robot.get_observation()
+        obs_dict = {'video.middle_view': obs['images']['camera0'], 'video.right_view': obs['images']['camera1'],
+                    'video.left_view': obs['images']['camera2'],
+                    "state.arm_joints": obs['state'][:6].astype(np.float64),
+                    "state.gripper": obs['state'][6:7].astype(np.float64),
+                    "annotation.human.task_description": "pick up the circular chip and place it on the yellow pot"}
+        # then add a dummy dimension of np.array([1, ...]) to all the keys (assume history is 1)
+        for k in obs_dict:
+            if isinstance(obs_dict[k], np.ndarray):
+                obs_dict[k] = obs_dict[k][np.newaxis, ...]
+            else:
+                obs_dict[k] = [obs_dict[k]]
 
-        # 1. 只有在执行了action_steps步后才采集观测并推理
-        if not waiting_for_infer and (action_step_counter >= args.action_steps or first):
-            first = False
-            obs = robot.get_observation()
-            # first add the images
-            obs_dict = {'video.middle_view': obs['images']['camera0'], 'video.right_view': obs['images']['camera1'],
-                        'video.left_view': obs['images']['camera2'],
-                        "state.arm_joints": obs['state'][:6].astype(np.float64),
-                        "state.gripper": obs['state'][6:7].astype(np.float64),
-                        "annotation.human.task_description": "pick up the circular chip and place it on the yellow pot"}
-
-            # # show images
-            # if self.show_images:
-            #     view_img(obs_dict)
-
-            # then add a dummy dimension of np.array([1, ...]) to all the keys (assume history is 1)
-            for k in obs_dict:
-                if isinstance(obs_dict[k], np.ndarray):
-                    obs_dict[k] = obs_dict[k][np.newaxis, ...]
-                else:
-                    obs_dict[k] = [obs_dict[k]]
-
-            try:
-                in_q.put_nowait((sent_idx, obs_dict))
-                sent_idx += 1
-                waiting_for_infer = True
-                action_step_counter = 0
-            except mp.queues.Full:
-                logging.debug("inference queue full, dropping frame")
-
-        # 2. 如果有新推理结果，立即清空并更新 action_queue
         try:
+            in_q.put_nowait((sent_idx, obs_dict))
+            sent_idx += 1
+        except mp.queues.Full:
+            logging.debug("inference queue full, dropping frame")
+
+        # 不用 try/except；直接检查队列是否为空
+        action_vals = None
+        while not out_q.empty():
             idx, action_vals = out_q.get_nowait()
             recv_idx = idx
             logging.debug(f"got result #{recv_idx}")
 
-            # 1. 记录未执行的旧动作
-            old_actions = list(action_queue)
-            action_queue.clear()
 
-            # 2. 新推理动作起点
-            if args.align_mode == "step":
-                start_idx = action_step_counter
-            elif args.align_mode == "euclidean" and len(old_actions) > 0 and len(action_vals) > 0:
-                # 取旧队列第一个动作，与新动作序列做欧氏距离最小匹配
-                old_action = old_actions[0]
-                dists = np.linalg.norm(action_vals - old_action, axis=1)
-                start_idx = int(np.argmin(dists))
-            else:
-                start_idx = 0
-            new_actions = action_vals[start_idx:]
-
-            # 3. 平滑衔接（可通过参数切换）
-            if args.smooth_type == "linear":
-                smooth_actions = linear_transition(old_actions, new_actions)
-            elif args.smooth_type == "cubic":
-                smooth_actions = cubic_transition(old_actions, new_actions)
-            elif args.smooth_type == "quintic":
-                smooth_actions = quintic_transition(old_actions, new_actions)
-            elif args.smooth_type == "ema":
-                smooth_actions = ema_transition(old_actions, new_actions, alpha=args.ema_alpha)
-            else:
-                raise ValueError(f"Unknown smooth_type: {args.smooth_type}")
-            for a in smooth_actions:
-                action_queue.append(a)
-
-            waiting_for_infer = False
-        except mp.queues.Empty:
-            pass
-
-        # 3. 如果 action_queue 有动作，发给 robot
-        if action_queue:
-            action_to_send = action_queue.popleft()
-            robot.send_action_np(action_to_send[:7])
-            action_step_counter += 1
-            # print(f'publish an action:{time.perf_counter()},action counter:{action_step_counter}')
+        # 2.4 如果有最新动作，就发给机器人
+        if action_vals is not None:
+            # logging.info(recv_idx)
+            robot.send_action_np(action_vals[:7])
 
         # 2.5 统计
         i += 1
         dt_s = time.perf_counter() - t0
-        # print(f"loop {i} dt={dt_s:.3f} s")
         time.sleep(max(step_time - dt_s,0))
-
+        # logging.info(f"loop {i} dt={t1-t0:.3f} s")
     # ==== 3. 结束 ====
     in_q.put(None)      # 通知子进程退出
     proc.join()
     robot.disconnect()
-    i, sent_idx, recv_idx = 0, 0, 0
-    kMaxTimeStamps = 6000
 
 if __name__ == "__main__":
     main()
